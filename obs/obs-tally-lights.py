@@ -22,7 +22,7 @@ obs_settings = {
   "scene_1": "",
   "scene_2": "",
   "scene_3": "",
-  "scene_4": "",
+  "scene_4": ""
 }
 
 
@@ -30,7 +30,7 @@ def script_description():
   return """
   OBS Tally Lights
 
-  Set the serial port and the baudrate (default 9600) of the connected OBS Tally Lights sender module. After that, specify one scene per tally light from the respecitve drop down menu.
+  Set the serial port and the baudrate (default 9600) of the connected OBS Tally Lights sender module. After that, specify one scene per tally light from the respecitve drop down menu. Multiple tally lights for one scene are not supported.
   """
 
 
