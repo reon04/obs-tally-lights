@@ -9,7 +9,14 @@ except ImportError:
   list_ports = None
 
 
-TIMER_INTERVAL_MS = 500
+#################### Settings ####################
+
+DEBUG = True
+SERIAL_TIMER_INTERVAL_MS = 250 # must be the same as the value set in otl-sender.ino (arduino code)
+OTLsenderId = 0 # must be the same as the ID defined by the OTLmodule enum in OTL.h (arduino code)
+OTLreceiverIds = [1, 2, 3, 4] # must be the same as the IDs defined by the OTLmodule enum in OTL.h (arduino code)
+
+##################################################
 
 serial_conn = None
 status_text = "Not connected"
@@ -17,13 +24,9 @@ last_timer = 0
 obs_settings_object = None
 obs_settings = {
   "serial_port": "",
-  "baudrate": 9600,
-  "brightness": 255,
-  "scene_1": "",
-  "scene_2": "",
-  "scene_3": "",
-  "scene_4": ""
-}
+  "baudrate": 115200,
+  "brightness": 128,
+} | {f"scene_{id}": "" for id in OTLreceiverIds}
 
 
 def script_description():
@@ -35,8 +38,8 @@ def script_description():
 
 
 def script_defaults(settings):
-  obs.obs_data_set_default_int(settings, "baudrate", 9600)
-  obs.obs_data_set_default_int(settings, "brightness", 255)
+  obs.obs_data_set_default_int(settings, "baudrate", 115200)
+  obs.obs_data_set_default_int(settings, "brightness", 128)
 
 
 def script_properties():
@@ -67,13 +70,6 @@ def script_properties():
     1
   )
 
-  obs.obs_properties_add_button(
-    props,
-    "reconnect_serial",
-    "Reconnect Serial",
-    on_serial_reconnect_clicked
-  )
-
   obs.obs_properties_add_int_slider(
     props,
     "brightness",
@@ -83,34 +79,14 @@ def script_properties():
     1
   )
 
-  obs.obs_properties_add_list(
-    props,
-    "scene_1",
-    "Scene for Tally 1",
-    obs.OBS_COMBO_TYPE_LIST,
-    obs.OBS_COMBO_FORMAT_STRING
-  )
-  obs.obs_properties_add_list(
-    props,
-    "scene_2",
-    "Scene for Tally 2",
-    obs.OBS_COMBO_TYPE_LIST,
-    obs.OBS_COMBO_FORMAT_STRING
-  )
-  obs.obs_properties_add_list(
-    props,
-    "scene_3",
-    "Scene for Tally 3",
-    obs.OBS_COMBO_TYPE_LIST,
-    obs.OBS_COMBO_FORMAT_STRING
-  )
-  obs.obs_properties_add_list(
-    props,
-    "scene_4",
-    "Scene for Tally 4",
-    obs.OBS_COMBO_TYPE_LIST,
-    obs.OBS_COMBO_FORMAT_STRING
-  )
+  for id in OTLreceiverIds:
+    obs.obs_properties_add_list(
+      props,
+      f"scene_{id}",
+      f"Scene for Tally {id}",
+      obs.OBS_COMBO_TYPE_LIST,
+      obs.OBS_COMBO_FORMAT_STRING
+    )
   fill_scenes(props)
 
   obs.obs_properties_add_button(
@@ -154,12 +130,7 @@ def fill_serial_ports(props):
 
 
 def fill_scenes(props):
-  for prop in [
-    obs.obs_properties_get(props, "scene_1"),
-    obs.obs_properties_get(props, "scene_2"),
-    obs.obs_properties_get(props, "scene_3"),
-    obs.obs_properties_get(props, "scene_4")
-  ]:
+  for prop in [obs.obs_properties_get(props, f"scene_{id}") for id in OTLreceiverIds]:
     obs.obs_property_list_clear(prop)
     obs.obs_property_list_add_string(prop, "-- no scene --", "")
     scenes = obs.obs_frontend_get_scenes()
@@ -173,7 +144,7 @@ def script_load(settings):
   global obs_settings_object
   obs_settings_object = settings
   obs.obs_frontend_add_event_callback(on_frontend_event)
-  obs.timer_add(on_timer, TIMER_INTERVAL_MS)
+  obs.timer_add(on_timer, SERIAL_TIMER_INTERVAL_MS)
 
 
 def script_unload():
@@ -183,23 +154,22 @@ def script_unload():
 
 
 def script_update(settings):
-  obs_settings["serial_port"] = obs.obs_data_get_string(settings, "serial_port")
-  obs_settings["baudrate"] = obs.obs_data_get_int(settings, "baudrate")
+  serialSettingsChanged = False
+  newSerialPort = obs.obs_data_get_string(settings, "serial_port")
+  newBaudRate = obs.obs_data_get_int(settings, "baudrate")
+  if newSerialPort != obs_settings["serial_port"] or newBaudRate != obs_settings["baudrate"]: serialSettingsChanged = True
+
+  obs_settings["serial_port"] = newSerialPort
+  obs_settings["baudrate"] = newBaudRate
   obs_settings["brightness"] = obs.obs_data_get_int(settings, "brightness")
-  obs_settings["scene_1"] = obs.obs_data_get_string(settings, "scene_1")
-  obs_settings["scene_2"] = obs.obs_data_get_string(settings, "scene_2")
-  obs_settings["scene_3"] = obs.obs_data_get_string(settings, "scene_3")
-  obs_settings["scene_4"] = obs.obs_data_get_string(settings, "scene_4")
+
+  for id in OTLreceiverIds: obs_settings[f"scene_{id}"] = obs.obs_data_get_string(settings, f"scene_{id}")
+
+  if serialSettingsChanged: reconnect_serial()
 
 
 def on_refresh_ports_clicked(props, prop):
   fill_serial_ports(props)
-  return True
-
-
-def on_serial_reconnect_clicked(props, prop):
-  reconnect_serial()
-  send_current_state()
   return True
 
 
@@ -231,7 +201,7 @@ def on_timer():
   now = time.monotonic()
 
   # discard backlogged on_timer executions
-  if now - last_timer < TIMER_INTERVAL_MS / 1000 * 0.9:
+  if now - last_timer < SERIAL_TIMER_INTERVAL_MS / 1000 * 0.9:
     return
 
   last_timer = now
@@ -259,17 +229,11 @@ def get_preview_scene_name():
 
 
 def send_current_state():
-  obs_settings_scenes_list = [
-    obs_settings["scene_1"],
-    obs_settings["scene_2"],
-    obs_settings["scene_3"],
-    obs_settings["scene_4"]
-  ]
-  mapping = {e: i+1 for i, e in enumerate(obs_settings_scenes_list) if e}
+  mapping = {e: i for i, e in [(id, obs_settings[f"scene_{id}"]) for id in OTLreceiverIds] if e}
 
-  program_id = mapping.get(get_program_scene_name(), 0)
-  preview_id = mapping.get(get_preview_scene_name(), 0)
-  brightness = str(obs_settings["brightness"]).zfill(3)
+  program_id = mapping.get(get_program_scene_name(), OTLsenderId)
+  preview_id = mapping.get(get_preview_scene_name(), OTLsenderId)
+  brightness = obs_settings["brightness"]
   
   payload = f"OTLCMD;{program_id};{preview_id};{brightness}\n"
   send_serial(payload)
@@ -285,7 +249,7 @@ def open_serial():
 
   if serial is None:
     status_text = "ERROR: pyserial not installed"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
     return
 
   port = obs_settings["serial_port"]
@@ -293,7 +257,7 @@ def open_serial():
 
   if not port:
     status_text = "Not connected: no port selected"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
     return
 
   try:
@@ -305,12 +269,12 @@ def open_serial():
     )
 
     status_text = f"Connected: {port} @ {baudrate}"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
 
   except Exception as e:
     serial_conn = None
     status_text = f"ERROR: {e}"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
 
 
 def close_serial():
@@ -326,7 +290,7 @@ def close_serial():
 
   if obs_settings["serial_port"]:
     status_text = "Not connected"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
 
 
 def send_serial(payload):
@@ -342,8 +306,8 @@ def send_serial(payload):
     serial_conn.reset_output_buffer()
     serial_conn.write(payload.encode("ascii"))
     serial_conn.flush()
-    obs.script_log(obs.LOG_INFO, f"Sent command: {payload.strip()}")
+    if DEBUG: obs.script_log(obs.LOG_INFO, f"Sent command: {payload.strip()}")
   except Exception as e:
     status_text = f"ERROR: {e}"
-    obs.script_log(obs.LOG_INFO, status_text)
+    if DEBUG: obs.script_log(obs.LOG_INFO, status_text)
     close_serial()
