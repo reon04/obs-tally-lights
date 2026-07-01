@@ -14,7 +14,7 @@ The Python environment used by OBS must have the _pyserial_ package installed:
 pip install pyserial
 ```
 
-After setting up Python scripting, download the [Python script](obs/obs-tally-lights.py) and load it in OBS via _Tools > Scripts_. Once loaded, the script can be configured from the same menu.
+After setting up Python scripting, download the [Python script](obs/otl.py) and load it in OBS via _Tools > Scripts_. Once loaded, the script can be configured from the same menu.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
